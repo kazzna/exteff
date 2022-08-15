@@ -10,7 +10,7 @@ object Stack {
 
   sealed trait Void[A]
 
-  type of[F[_], G[_]] = {type R[A] = Stack[F, G, A]}
+  type of[F[_], G[_]] = { type R[A] = Stack[F, G, A] }
 
   type of1[F1[_]] = of[F1, Void]
   type of2[F1[_], F2[_]] = of[F1, of1[F2]#R]
