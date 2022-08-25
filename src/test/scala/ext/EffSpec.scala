@@ -23,7 +23,7 @@ class EffSpec extends AnyFreeSpec {
         }
 
         val eff4 = eff3.restruct(func1ToOption)
-        assert(eff4.extract === Option(42))
+        assert(eff4.extractEff === Option(42))
       }
     }
   }

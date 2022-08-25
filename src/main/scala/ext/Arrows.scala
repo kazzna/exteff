@@ -1,8 +1,11 @@
 package ext
 
+import ext.types.{Applicative, Monad}
+
 import scala.annotation.tailrec
 
 sealed trait Arrows[F[_], A, B] {
+  final def thenApply[C](f: Free[F, B => C]): Arrows[F, A, C] = andThen(Arrows.apply(f))
   final def thenBind[C](f: B => Free[F, C]): Arrows[F, A, C] = andThen(Arrows.bind(f))
 
   final def andThen[C](arrows: Arrows[F, B, C]): Arrows[F, A, C] = (this, arrows) match {
@@ -55,11 +58,24 @@ sealed trait Arrows[F[_], A, B] {
     case arrow: Arrows.Arrow[F, A, B] => Arrows.applyArrow(arrow, a)
     case Arrows.SortedArrows(a1, a2) => Arrows.applyArrow(a1, a).bindArrows(a2)
   }
+
+  def extract(fa: F[A])(implicit F: Monad[F]): F[B] = sorted match {
+    case arrow: Arrows.Arrow[F, A, B] => Arrows.extractArrow(arrow, fa)
+    case Arrows.SortedArrows(a1, a2) =>
+      @tailrec
+      def loop[C, D](fc: F[C], arrow: Arrows.Arrow[F, C, D], sorted: Arrows.Sorted[F, D, B]): F[B] = sorted match {
+        case Arrows.SortedArrows(a1, a2) => loop(Arrows.extractArrow(arrow, fc), a1, a2)
+        case arrow2: Arrows.Arrow[F, D, B] => Arrows.extractArrow(arrow2, Arrows.extractArrow(arrow, fc))
+      }
+
+      loop(fa, a1, a2)
+  }
 }
 
 object Arrows {
   def point[F[_], A]: Arrows[F, A, A] = Point()
-  def bind[F[_], A, B](arrow: A => Free[F, B]): Arrows[F, A, B] = Bind(arrow)
+  def apply[F[_], A, B](f: Free[F, A => B]): Arrows[F, A, B] = Apply(f)
+  def bind[F[_], A, B](f: A => Free[F, B]): Arrows[F, A, B] = Bind(f, NaturalTransformation.reflect)
 
   private def junction[F[_], A, B, C](arrows1: Arrows[F, A, B], arrows2: Arrows[F, B, C]): Arrows[F, A, C] =
     Junction(arrows1, arrows2)
@@ -71,20 +87,21 @@ object Arrows {
       arrow: Arrow[F, A, B],
       nt: NaturalTransformation[F, S]
   ): Arrow[S, A, B] = arrow match {
-    case Point() => Arrows.point.asInstanceOf[Arrows.Arrow[S, A, B]]
-    case bind: Arrows.Bind[F, A, B] => Arrows.Transform(bind, nt)
-    case Transform(arrow, nt0) => Arrows.Transform(arrow, nt0.compose(nt))
+    case Point() => Point().asInstanceOf[Arrows.Arrow[S, A, B]]
+    case Apply(f) => Apply(f.transform(nt))
+    case Bind(f, nt0) => Bind(f, nt0.compose(nt))
   }
 
-  private def applyArrow[F[_], A, B](arrow: Arrow[F, A, B], a: A): Free[F, B] = {
-    @tailrec
-    def loop[G[_]](arrow: Arrow[G, A, B], a: A, nt: NaturalTransformation[G, F]): Free[F, B] = arrow match {
-      case Point() => Free.point(a).asInstanceOf[Free[F, B]]
-      case Bind(f) => f(a).transform(nt)
-      case Transform(arrow, nt0) => loop(arrow, a, nt0.compose(nt))
-    }
+  private def applyArrow[F[_], A, B](arrow: Arrow[F, A, B], a: A): Free[F, B] = arrow match {
+    case Point() => Free.point(a).asInstanceOf[Free[F, B]]
+    case Apply(f) => f.map(f => f(a))
+    case Bind(f, nt) => f(a).transform(nt)
+  }
 
-    loop(arrow, a, NaturalTransformation.reflect)
+  private def extractArrow[F[_], A, B](arrow: Arrow[F, A, B], fa: F[A])(implicit F: Monad[F]): F[B] = arrow match {
+    case Point() => fa.asInstanceOf[F[B]]
+    case Apply(f) => F.apply(fa)(f.extract)
+    case Bind(f, nt) => F.bind(fa)(a => f(a).transform(nt).extract)
   }
 
   private final case class Junction[F[_], A, B, C](
@@ -101,6 +118,7 @@ object Arrows {
   private sealed trait Arrow[F[_], A, B] extends Sorted[F, A, B]
 
   private final case class Point[F[_], A]() extends Arrow[F, A, A]
-  private final case class Bind[F[_], A, B](f: A => Free[F, B]) extends Arrow[F, A, B]
-  private final case class Transform[F[_], G[_], A, B](arrow: Arrow[F, A, B], nt: F ~> G) extends Arrow[G, A, B]
+  private final case class Apply[F[_], A, B](f: Free[F, A => B]) extends Arrow[F, A, B]
+  private final case class Bind[F[_], G[_], A, B](f: A => Free[F, B], nt: NaturalTransformation[F, G])
+      extends Arrow[G, A, B]
 }
