@@ -1,5 +1,6 @@
 package ext
 
+import ext.types.{Applicative, FutureMonad, Monad}
 import org.scalatest.freespec.AnyFreeSpec
 
 import java.util.concurrent.Executors
@@ -55,58 +56,105 @@ class FreeSpec extends AnyFreeSpec {
       }
     }
 
-    "flatMap" - {
-      import ext.types.FutureMonad.monadInstance
+    "composed" - {
+      def fixed(numberOfThreads: Int): ExecutionContext =
+        ExecutionContext.fromExecutor(Executors.newFixedThreadPool(numberOfThreads))
 
-      "should run in series" in {
-        val list: ListBuffer[Int] = ListBuffer.empty
-
-        def f(i: Int): () => Int = () => {
-          Thread.sleep(i * 100)
-          list.append(i)
-          i
-        }
-
-        implicit val ec: ExecutionContext = ExecutionContext.fromExecutor(Executors.newFixedThreadPool(8))
-
-        val nt = new NaturalTransformation[() => *, Future] {
+      def funcToFuture()(implicit ec: ExecutionContext): NaturalTransformation[() => *, Future] =
+        new NaturalTransformation[() => *, Future] {
           override def apply[A](fa: () => A): Future[A] = Future(fa())
         }
 
-        val free = for {
-          a <- Free.lift(f(3))
-          b <- Free.lift(f(2))
-          c <- Free.lift(f(1))
-        } yield List(a, b, c)
+      def createFunc(listBuffer: ListBuffer[Int]): Int => () => Int = i =>
+        () => {
+          Thread.sleep(i * 100)
+          listBuffer.append(i)
+          i
+        }
 
-        val actual = Await.result(free.foldMap(nt), 3.seconds)
-        assert(actual === List(3, 2, 1))
-        assert(list.toList === List(3, 2, 1))
+      "monadic" - {
+        "should run in series" in {
+          val list: ListBuffer[Int] = ListBuffer.empty
+          val f = createFunc(list)
+
+          val free = for {
+            a <- Free.lift(f(3))
+            b <- Free.lift(f(2))
+            c <- Free.lift(f(1))
+          } yield List(a, b, c)
+
+          implicit val ec: ExecutionContext = fixed(8)
+          implicit val monad: Monad[Future] = FutureMonad.monadInstance
+          val nt = funcToFuture()
+          val actual = Await.result(free.foldMap(nt), 3.seconds)
+
+          assert(actual === List(3, 2, 1))
+          assert(list.toList === List(3, 2, 1))
+        }
+
+        "should not be extracted by extractApplicative" in {
+          val list: ListBuffer[Int] = ListBuffer.empty
+          val f = createFunc(list)
+
+          val free2 = Free.lift(f(2))
+          val free3 = Free.lift(f(3))
+
+          val free23 = free2.map2(free3)((a, b) => List(a, b))
+          val free231 = for {
+            as <- free23
+            a <- Free.lift(f(1))
+          } yield a +: as
+
+          implicit val ec: ExecutionContext = fixed(8)
+          implicit val applicative: Applicative[Future] = FutureMonad.monadInstance
+          val free = free231.transform(funcToFuture())
+          val actual = free.extractApplicative
+
+          assert(actual.isLeft)
+          Thread.sleep(400)
+          assert(list.toList === List(2, 3))
+        }
       }
-    }
 
-    "apply" - {
-      import ext.types.FutureMonad.monadInstance
-      "should run in parallel" in {
+      "applicative" - {
+        "should run in parallel" in {
+          val list: ListBuffer[Int] = ListBuffer.empty
+          val f = createFunc(list)
+
+          val free1 = Free.lift(f(1)).map2(Free.lift(f(3)))((a, b) => List(a, b))
+          val free2 = free1.map2(Free.lift(f(2)))((a, b) => b +: a)
+
+          implicit val ec: ExecutionContext = fixed(8)
+          implicit val monad: Monad[Future] = FutureMonad.monadInstance
+          val nt = funcToFuture()
+          val actual = Await.result(free2.foldMap(nt), 3.seconds)
+
+          assert(actual === List(2, 1, 3))
+          assert(list.toList === List(1, 2, 3))
+        }
+      }
+
+      "should be extracted by extractApplicative" in {
         val list: ListBuffer[Int] = ListBuffer.empty
+        val f = createFunc(list)
 
-        def f(i: Int): () => Int = () => {
-          Thread.sleep(i * 100)
-          list.append(i)
-          i
-        }
+        val free1 = Free.lift(f(1))
+        val free2 = Free.lift(f(2))
+        val free3 = Free.lift(f(3))
 
-        implicit val ec: ExecutionContext = ExecutionContext.fromExecutor(Executors.newFixedThreadPool(8))
+        val free23 = free2.map2(free3)((a, b) => List(a, b))
+        val free123 = free23.map2(free1)((a, b) => b +: a)
 
-        val nt = new NaturalTransformation[() => *, Future] {
-          override def apply[A](fa: () => A): Future[A] = Future(fa())
-        }
+        implicit val ec: ExecutionContext = fixed(8)
+        implicit val applicative: Applicative[Future] = FutureMonad.monadInstance
+        val free = free123.transform(funcToFuture())
+        val either = free.extractApplicative
 
-        val free1 = Free.lift(f(1)).map2(Free.lift(f(3)))((a, b) => List(a, b))
-        val free2 = free1.map2(Free.lift(f(2)))((a, b) => b +: a)
+        assert(either.isRight)
 
-        val actual = Await.result(free2.foldMap(nt), 3.seconds)
-        assert(actual === List(2, 1, 3))
+        val actual = either.map(s => Await.result(s, 3.seconds)).left.map(_ => List.empty[Int]).merge
+
+        assert(actual === List(1, 2, 3))
         assert(list.toList === List(1, 2, 3))
       }
     }

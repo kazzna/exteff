@@ -60,15 +60,39 @@ sealed trait Arrows[F[_], A, B] {
   }
 
   def extract(fa: F[A])(implicit F: Monad[F]): F[B] = sorted match {
-    case arrow: Arrows.Arrow[F, A, B] => Arrows.extractArrow(arrow, fa)
+    case arrow: Arrows.Arrow[F, A, B] => arrow.extractArrow(fa)
     case Arrows.SortedArrows(a1, a2) =>
       @tailrec
       def loop[C, D](fc: F[C], arrow: Arrows.Arrow[F, C, D], sorted: Arrows.Sorted[F, D, B]): F[B] = sorted match {
-        case Arrows.SortedArrows(a1, a2) => loop(Arrows.extractArrow(arrow, fc), a1, a2)
-        case arrow2: Arrows.Arrow[F, D, B] => Arrows.extractArrow(arrow2, Arrows.extractArrow(arrow, fc))
+        case Arrows.SortedArrows(a1, a2) => loop(arrow.extractArrow(fc), a1, a2)
+        case arrow2: Arrows.Arrow[F, D, B] => arrow2.extractArrow(arrow.extractArrow(fc))
       }
 
       loop(fa, a1, a2)
+  }
+
+  def extractApplicative(fa: F[A])(implicit F: Applicative[F]): Either[Eff[F, B], F[B]] = sorted match {
+    case arrow: Arrows.Arrow[F, A, B] => arrow.extractArrowApplicative(fa)
+    case Arrows.SortedArrows(a1, a2) =>
+      @tailrec
+      def loop[AA, C](
+          efa: Either[Free[F, AA], F[AA]],
+          a1: Arrows.Arrow[F, AA, C],
+          a2: Arrows.Sorted[F, C, B]
+      ): Either[Free[F, B], F[B]] = efa match {
+        case Left(free) => Left(free.bindArrows(a1.andThen(a2)))
+        case Right(fa) =>
+          a2 match {
+            case a3: Arrows.Arrow[F, C, B] =>
+              a1.extractArrowApplicative(fa) match {
+                case Left(freeC) => Left(freeC.bindArrows(a3))
+                case Right(fc) => a3.extractArrowApplicative(fc)
+              }
+            case Arrows.SortedArrows(a21, a22) => loop(a1.extractArrowApplicative(fa), a21, a22)
+          }
+      }
+
+      loop(Right(fa), a1, a2)
   }
 }
 
@@ -98,12 +122,6 @@ object Arrows {
     case Bind(f, nt) => f(a).transform(nt)
   }
 
-  private def extractArrow[F[_], A, B](arrow: Arrow[F, A, B], fa: F[A])(implicit F: Monad[F]): F[B] = arrow match {
-    case Point() => fa.asInstanceOf[F[B]]
-    case Apply(f) => F.apply(fa)(f.extract)
-    case Bind(f, nt) => F.bind(fa)(a => f(a).transform(nt).extract)
-  }
-
   private final case class Junction[F[_], A, B, C](
     a1: Arrows[F, A, B],
     a2: Arrows[F, B, C]
@@ -115,7 +133,47 @@ object Arrows {
     a2: Sorted[F, B, C]
   ) extends Sorted[F, A, C]
 
-  private sealed trait Arrow[F[_], A, B] extends Sorted[F, A, B]
+  private sealed trait Arrow[F[_], A, B] extends Sorted[F, A, B] {
+    final def extractArrow(fa: F[A])(implicit F: Monad[F]): F[B] = this match {
+      case Point() => fa.asInstanceOf[F[B]]
+      case Apply(f) => F.ap(fa)(f.extract)
+      case Bind(f, nt) => F.bind(fa)(a => f(a).transform(nt).extract)
+    }
+
+    final def extractArrowApplicative(fa: F[A])(implicit F: Applicative[F]): Either[Free[F, B], F[B]] = this match {
+      case Point() => Right(fa.asInstanceOf[F[B]])
+      case Apply(f) => eitherApplicative.ap(Right(fa))(f.extractApplicative)
+      case bind @ Bind(_, _) => Left(Free.impure(fa, bind))
+    }
+  }
+
+  private type EA[F[_]] = { type R[A] = Either[Free[F, A], F[A]] }
+
+  private def eitherApplicative[F[_]](implicit F: Applicative[F]): Applicative[EA[F]#R] = new Applicative[EA[F]#R] {
+    override def point[A](a: A): Either[Free[F, A], F[A]] = Right(F.point(a))
+
+    override def map2[A, B, C](
+        fa: Either[Free[F, A], F[A]]
+    )(
+        fb: Either[Free[F, B], F[B]]
+    )(
+        f: (A, B) => C
+    ): Either[Free[F, C], F[C]] = (fa, fb) match {
+      case (Left(freeA), Left(freeB)) => Left(freeA.map2(freeB)(f))
+      case (Left(freeA), Right(fb)) => Left(freeA.ap(Free.lift(F.map(fb)(b => (a: A) => f(a, b)))))
+      case (Right(fa), Left(freeB)) => Left(freeB.ap(Free.lift(F.map(fa)(f.curried))))
+      case (Right(fa), Right(fb)) => Right(F.map2(fa)(fb)(f))
+    }
+
+    override def ap[A, B](
+        fa: Either[Free[F, A], F[A]]
+    )(f: Either[Free[F, A => B], F[A => B]]): Either[Free[F, B], F[B]] = (fa, f) match {
+      case (Left(freeA), Left(freeF)) => Left(freeA.ap(freeF))
+      case (Left(freeA), Right(ff)) => Left(freeA.ap(Free.lift(ff)))
+      case (Right(fa), Left(freeF)) => Left(Free.lift(fa).ap(freeF))
+      case (Right(fa), Right(ff)) => Right(F.ap(fa)(ff))
+    }
+  }
 
   private final case class Point[F[_], A]() extends Arrow[F, A, A]
   private final case class Apply[F[_], A, B](f: Free[F, A => B]) extends Arrow[F, A, B]

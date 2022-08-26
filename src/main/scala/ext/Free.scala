@@ -9,9 +9,9 @@ sealed trait Free[F[_], A] {
   }
 
   def map2[B, C](fb: Free[F, B])(f: (A, B) => C): Free[F, C] =
-    fb.apply(this.apply(Free.pure[F, A => B => C](f.curried)))
+    fb.ap(ap(Free.pure[F, A => B => C](f.curried)))
 
-  def apply[B](f: Free[F, A => B]): Free[F, B] = this match {
+  def ap[B](f: Free[F, A => B]): Free[F, B] = this match {
     case Free.Pure(a) => f.map(f => f(a))
     case Free.Impure(ri, arrows) => Free.impure(ri, arrows.thenApply(f))
   }
@@ -36,6 +36,11 @@ sealed trait Free[F[_], A] {
     case Free.Impure(ri, arrows) => arrows.extract(ri)
   }
 
+  def extractApplicative(implicit F: Applicative[F]): Either[Free[F, A], F[A]] = this match {
+    case Free.Pure(a) => Right(F.point(a))
+    case Free.Impure(ri, arrows) => arrows.extractApplicative(ri)
+  }
+
   def foldMap[G[_]](nt: NaturalTransformation[F, G])(implicit M: Monad[G]): G[A] = transform(nt).extract
 }
 
@@ -49,4 +54,8 @@ object Free {
 
   final case class Pure[F[_], A] private (a: A) extends Free[F, A]
   final case class Impure[F[_], I, A] private (ri: F[I], arrows: Arrows[F, I, A]) extends Free[F, A]
+
+  implicit class FreeAp[F[_], A, B](val free: Free[F, A => B]) extends AnyVal {
+    def apply(fa: Free[F, A]): Free[F, B] = fa.ap(free)
+  }
 }
