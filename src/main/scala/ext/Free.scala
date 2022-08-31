@@ -4,7 +4,7 @@ import ext.types.{Applicative, Monad}
 
 import scala.annotation.tailrec
 
-sealed trait Free[F[_], A] {
+sealed abstract class Free[F[_], A] {
   def map[B](f: A => B): Free[F, B] = this match {
     case Free.Pure(a) => Free.point(f(a))
     case Free.Impure(ri, arrows) => Free.Impure(ri, arrows.thenApply(Free.point(f)))
@@ -64,7 +64,7 @@ object Free {
     def apply(fa: Free[F, A]): Free[F, B] = fa.ap(free)
   }
 
-  sealed trait Arrows[F[_], A, B] {
+  sealed abstract class Arrows[F[_], A, B] {
     final def thenMap[C](f: B => C): Arrows[F, A, C] = thenApply(Free.point(f))
 
     final def thenApply[C](f: Free[F, B => C]): Arrows[F, A, C] = andThen(Arrows.apply(f))
