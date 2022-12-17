@@ -1,6 +1,5 @@
 package ext
 
-import ext.types.{Applicative, FutureMonad, Monad}
 import org.scalatest.freespec.AnyFreeSpec
 
 import java.util.concurrent.Executors
@@ -11,36 +10,41 @@ import scala.concurrent.{Await, ExecutionContext, Future}
 class FreeSpec extends AnyFreeSpec {
   "Free" - {
     "extract" - {
-      import ext.types.OptionMonad.monadInstance
       "pure" in {
+        import types.OptionMonad.monadInstance
+
         val free: Free[Option, Int] = Free.pure(42)
         assert(free.extract === Option(42))
       }
 
       "pure mapped" - {
+        import types.OptionMonad.monadInstance
+
         val free: Free[Option, Int] = Free.pure(42)
         assert(free.map(_.toString).extract === Option("42"))
       }
 
       "lift" in {
+        import types.OptionMonad.monadInstance
         val option = Option(42)
-        val free = Free.lift(option)
 
+        val free = Free.lift(option)
         assert(free.extract === Option(42))
       }
 
       "lift mapped" in {
-        val free = Free.lift(Option(42)).map(_.toString)
+        import types.OptionMonad.monadInstance
 
+        val free = Free.lift(Option(42)).map(_.toString)
         assert(free.extract === Option("42"))
       }
     }
 
     "foldMap" - {
-      import ext.types.OptionMonad.monadInstance
       case class Box[A](a: A)
 
       "to Option" in {
+        import types.OptionMonad.monadInstance
         val box = Box(42)
         val free = for {
           a <- Free.lift(box)
@@ -84,7 +88,7 @@ class FreeSpec extends AnyFreeSpec {
           } yield List(a, b, c)
 
           implicit val ec: ExecutionContext = fixed(8)
-          implicit val monad: Monad[Future] = FutureMonad.monadInstance
+          import types.FutureMonad.monadInstance
           val nt = funcToFuture()
           val actual = Await.result(free.foldMap(nt), 3.seconds)
 
@@ -106,7 +110,7 @@ class FreeSpec extends AnyFreeSpec {
           } yield a +: as
 
           implicit val ec: ExecutionContext = fixed(8)
-          implicit val applicative: Applicative[Future] = FutureMonad.monadInstance
+          import types.FutureMonad.applicativeInstance
           val free = free231.transform(funcToFuture())
           val actual = free.extractApplicative
 
@@ -125,7 +129,7 @@ class FreeSpec extends AnyFreeSpec {
           val free2 = free1.map2(Free.lift(f(2)))((a, b) => b +: a)
 
           implicit val ec: ExecutionContext = fixed(8)
-          implicit val monad: Monad[Future] = FutureMonad.monadInstance
+          import types.FutureMonad.monadInstance
           val nt = funcToFuture()
           val actual = Await.result(free2.foldMap(nt), 3.seconds)
 
@@ -146,7 +150,7 @@ class FreeSpec extends AnyFreeSpec {
         val free123 = free23.map2(free1)((a, b) => b +: a)
 
         implicit val ec: ExecutionContext = fixed(8)
-        implicit val applicative: Applicative[Future] = FutureMonad.monadInstance
+        import types.FutureMonad.monadInstance
         val free = free123.transform(funcToFuture())
         val either = free.extractApplicative
 

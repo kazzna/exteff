@@ -1,4 +1,4 @@
-package ext.types
+package types
 
 object OptionMonad {
   implicit val monadInstance: Monad[Option] = new Monad[Option] {

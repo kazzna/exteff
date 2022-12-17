@@ -1,8 +1,8 @@
 package ext
 
 import ext.Eff.{Single, Stacked}
-import ext.types.OptionMonad.monadInstance
 import org.scalatest.freespec.AnyFreeSpec
+import types.OptionMonad.monadInstance
 
 class EffSpec extends AnyFreeSpec {
   "Eff" - {

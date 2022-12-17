@@ -1,4 +1,4 @@
-package ext.types
+package types
 
 trait Monad[F[_]] extends Applicative[F] with Bind[F] { self =>
   override def ap[A, B](fa: F[A])(f: F[A => B]): F[B] =

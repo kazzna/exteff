@@ -1,6 +1,6 @@
 package ext
 
-import ext.types.Monad
+import types.Monad
 
 object Eff {
   def point[R[_], A](a: A): Eff[R, A] = Free.point(a)

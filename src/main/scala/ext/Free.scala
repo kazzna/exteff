@@ -1,6 +1,6 @@
 package ext
 
-import ext.types.{Applicative, Monad}
+import types.{Applicative, Monad}
 
 import scala.annotation.tailrec
 
