@@ -207,7 +207,7 @@ object Free {
       final def extractArrow(fa: F[A])(implicit F: Monad[F]): F[B] = this match {
         case Point() => fa.asInstanceOf[F[B]]
         case Apply(f) => F.ap(f.extract)(fa)
-        case Bind(f, nt) => F.bind(fa)(a => f(a).transform(nt).extract)
+        case Bind(f, nt) => F.bind((a: A) => f(a).transform(nt).extract)(fa)
       }
 
       final def extractArrowApplicative(fa: F[A])(implicit F: Applicative[F]): Either[Free[F, B], F[B]] = this match {
