@@ -1,7 +1,5 @@
 package types
 
-import types.{Applicative, Monad}
-
 import scala.concurrent.{ExecutionContext, Future}
 
 object FutureMonad {

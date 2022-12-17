@@ -230,8 +230,8 @@ object Free {
           f: (A, B) => C
       ): Either[Free[F, C], F[C]] = (fa, fb) match {
         case (Left(freeA), Left(freeB)) => Left(freeA.map2(freeB)(f))
-        case (Left(freeA), Right(fb)) => Left(freeA.ap(Free.lift(F.map(fb)(b => (a: A) => f(a, b)))))
-        case (Right(fa), Left(freeB)) => Left(freeB.ap(Free.lift(F.map(fa)(f.curried))))
+        case (Left(freeA), Right(fb)) => Left(freeA.ap(Free.lift(F.map((b: B) => (a: A) => f(a, b))(fb))))
+        case (Right(fa), Left(freeB)) => Left(freeB.ap(Free.lift(F.map(f.curried)(fa))))
         case (Right(fa), Right(fb)) => Right(F.map2(fa)(fb)(f))
       }
 
