@@ -223,17 +223,15 @@ object Free {
       override def point[A](a: A): Either[Free[F, A], F[A]] = Right(F.point(a))
 
       override def map2[A, B, C](
-          fa: Either[Free[F, A], F[A]]
-      )(
-          fb: Either[Free[F, B], F[B]]
-      )(
           f: (A, B) => C
-      ): Either[Free[F, C], F[C]] = (fa, fb) match {
-        case (Left(freeA), Left(freeB)) => Left(freeA.map2(freeB)(f))
-        case (Left(freeA), Right(fb)) => Left(freeA.ap(Free.lift(F.map((b: B) => (a: A) => f(a, b))(fb))))
-        case (Right(fa), Left(freeB)) => Left(freeB.ap(Free.lift(F.map(f.curried)(fa))))
-        case (Right(fa), Right(fb)) => Right(F.map2(fa)(fb)(f))
-      }
+      ): Either[Free[F, A], F[A]] => Either[Free[F, B], F[B]] => Either[Free[F, C], F[C]] = fa =>
+        fb =>
+          (fa, fb) match {
+            case (Left(freeA), Left(freeB)) => Left(freeA.map2(freeB)(f))
+            case (Left(freeA), Right(fb)) => Left(freeA.ap(Free.lift(F.map((b: B) => (a: A) => f(a, b))(fb))))
+            case (Right(fa), Left(freeB)) => Left(freeB.ap(Free.lift(F.map(f.curried)(fa))))
+            case (Right(fa), Right(fb)) => Right(F.map2(f)(fa)(fb))
+          }
 
       override def ap[A, B](
           f: Either[Free[F, A => B], F[A => B]]
