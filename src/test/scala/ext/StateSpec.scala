@@ -36,7 +36,7 @@ class StateSpec extends AnyFreeSpec {
       "returns State" in {
         val apply = State.apply((s: String) => (s.length, s))
 
-        assert(apply.run("s") === (1, "s"))
+        assert(apply.run("abc") === (3, "abc"))
       }
     }
 
@@ -114,10 +114,11 @@ class StateSpec extends AnyFreeSpec {
           _ <- push("before")
           s <- State.get
         } yield s.headOption.getOrElse("abc")
-        val f = (s: String) => for {
-          _ <- push("after")
-          _ <- push(s"***$s***")
-        } yield s.length
+        val f = (s: String) =>
+          for {
+            _ <- push("after")
+            _ <- push(s"***$s***")
+          } yield s.length
 
         val actual = state.flatMap(f)
         assert(actual.run(empty) === (6, List("***before***", "after", "before")))
