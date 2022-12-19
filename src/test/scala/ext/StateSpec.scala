@@ -24,19 +24,19 @@ class StateSpec extends AnyFreeSpec {
   } yield ()
 
   "State object" - {
+    "pure" - {
+      "returns State" in {
+        val pure = State.pure[String, Int](42)
+
+        assert(pure.run("s") === (42, "s"))
+      }
+    }
+
     "point" - {
       "returns State" in {
         val point = State.point[String, Int](42)
 
         assert(point.run("s") === (42, "s"))
-      }
-    }
-
-    "apply" - {
-      "returns State" in {
-        val apply = State.apply((s: String) => (s.length, s))
-
-        assert(apply.run("abc") === (3, "abc"))
       }
     }
 
@@ -61,6 +61,14 @@ class StateSpec extends AnyFreeSpec {
         val modify = State.modify[Int](_ + 1)
 
         assert(modify.run(41) === ((), 42))
+      }
+    }
+
+    "apply" - {
+      "returns State" in {
+        val apply = State.apply((s: String) => (s.length, s))
+
+        assert(apply.run("abc") === (3, "abc"))
       }
     }
   }
