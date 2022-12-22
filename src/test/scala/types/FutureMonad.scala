@@ -1,4 +1,6 @@
-package ext.types
+package types
+
+import types.{Applicative, Monad}
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -11,4 +13,6 @@ object FutureMonad {
       fa.zipWith(f)((a, f) => f(a))
     override def bind[A, B](fa: Future[A])(f: A => Future[B]): Future[B] = fa.flatMap(f)
   }
+
+  implicit def applicativeInstance(implicit ec: ExecutionContext): Applicative[Future] = monadInstance
 }

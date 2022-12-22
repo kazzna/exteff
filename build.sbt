@@ -1,16 +1,29 @@
 ThisBuild / organization := "jp.kazzna"
 ThisBuild / scalaVersion := "2.13.8"
 
-val root = (project in file("."))
+lazy val root = (project in file("."))
   .settings(
     name := "exteff",
     version := "0.1.0",
     scalacOptions ++= Seq(
-      "-deprecation",
-      "-feature"
+      "--deprecation",
+      "--feature"
     ),
     libraryDependencies ++= Seq(
       "org.scalatest" %% "scalatest" % "3.2.13" % "test"
+    )
+  )
+  .dependsOn(
+    types
+  )
+
+lazy val types = (project in file("types"))
+  .settings(
+    name := "types",
+    version := "0.1.0",
+    scalacOptions ++= Seq(
+      "--deprecation",
+      "--feature"
     )
   )
 

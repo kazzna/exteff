@@ -1,4 +1,4 @@
-package ext.types
+package types
 
 trait Applicative[F[_]] extends Functor[F] with Point[F] with Apply[F] {
   override def map[A, B](fa: F[A])(f: A => B): F[B] = ap(fa)(point(f))
