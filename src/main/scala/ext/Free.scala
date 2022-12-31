@@ -1,254 +1,302 @@
 package ext
 
-import types.{Applicative, Monad}
+import types.{Applicative, Functor, Monad}
 
 import scala.annotation.tailrec
 
 sealed abstract class Free[F[_], A] {
-  def map[B](f: A => B): Free[F, B] = this match {
-    case Free.Pure(a) => Free.point(f(a))
-    case Free.Impure(ri, arrows) => Free.Impure(ri, arrows.thenApply(Free.point(f)))
-  }
+  final def map[B](f: A => B): Free[F, B] = bind(Free.Arrows.map(f))
+  final def ap[B](free: Free[F, A => B]): Free[F, B] = bind(Free.Arrows.apply(free))
+  final def map2[B, C](free: Free[F, B])(f: (A, B) => C): Free[F, C] =
+    ap(Free.point[F, A => B => C](f.curried)).ap(free.map(b => (f: B => C) => f(b)))
 
-  def map2[B, C](fb: Free[F, B])(f: (A, B) => C): Free[F, C] =
-    fb.ap(ap(Free.pure[F, A => B => C](f.curried)))
-
-  def ap[B](f: Free[F, A => B]): Free[F, B] = this match {
-    case Free.Pure(a) => f.map(f => f(a))
-    case Free.Impure(ri, arrows) => Free.impure(ri, arrows.thenApply(f))
-  }
-
-  def flatMap[B](f: A => Free[F, B]): Free[F, B] = this match {
-    case Free.Pure(a) => f(a)
-    case Free.Impure(ri, arrows) => Free.impure(ri, arrows.thenBind(f))
-  }
-
-  private def bindArrows[B](arrows: Free.Arrows[F, A, B]): Free[F, B] = this match {
-    case Free.Pure(a) => arrows.resume(a)
-    case Free.Impure(ri, arrows0) => Free.impure(ri, arrows0.andThen(arrows))
-  }
-
-  def transform[G[_]](nt: NaturalTransformation[F, G]): Free[G, A] = this match {
+  final def flatMap[B](f: A => Free[F, B]): Free[F, B] = bind(Free.Arrows.bind(f))
+  final def transform[G[_]](nt: NaturalTransformation[F, G]): Free[G, A] = this match {
     case Free.Pure(a) => Free.pure(a)
-    case Free.Impure(ri, arrows) => Free.impure(nt(ri), arrows.transform(nt))
+    case Free.Lifted(fa) => Free.lift(nt(fa))
+    case impure @ Free.Impure(_, _) => Free.lift(nt(impure.fi)).bind(impure.arrows.transform(nt))
   }
-
-  def extract(implicit F: Monad[F]): F[A] = this match {
+  final def extract(implicit F: Monad[F]): F[A] = this match {
     case Free.Pure(a) => F.point(a)
-    case Free.Impure(ri, arrows) => arrows.extract(ri)
+    case Free.Lifted(fa) => fa
+    case impure @ Free.Impure(_, _) => impure.arrows.run(impure.fi)
   }
+  final def foldMap[G[_]: Monad](nt: NaturalTransformation[F, G]): G[A] = transform(nt).extract
 
-  def extractApplicative(implicit F: Applicative[F]): Either[Free[F, A], F[A]] = this match {
-    case Free.Pure(a) => Right(F.point(a))
-    case Free.Impure(ri, arrows) => arrows.extractApplicative(ri)
+  @inline
+  private[ext] final def bind[B](arrows: Free.Arrows[F, A, B]): Free[F, B] = this match {
+    case Free.Pure(a) => arrows(a)
+    case Free.Lifted(fa) => Free.impure(fa, arrows)
+    case impure @ Free.Impure(_, _) => Free.impure(impure.fi, impure.arrows.compose(arrows))
   }
-
-  def foldMap[G[_]](nt: NaturalTransformation[F, G])(implicit M: Monad[G]): G[A] = transform(nt).extract
 }
 
 object Free {
   def pure[F[_], A](a: A): Free[F, A] = Pure(a)
-
-  def impure[F[_], I, A](ri: F[I], arrow: Arrows[F, I, A]): Free[F, A] = Impure(ri, arrow)
-
   @inline
   def point[F[_], A](a: A): Free[F, A] = pure(a)
+  def lift[F[_], A](fa: F[A]): Free[F, A] = Lifted(fa)
+  private def impure[F[_], I, A](fi: F[I], arrows: Arrows[F, I, A]): Free[F, A] = Impure(fi, arrows)
 
-  def lift[F[_], A](fa: F[A]): Free[F, A] = impure(fa, Arrows.point)
+  implicit final class Flatten[F[_], A](val free: Free[F, Free[F, A]]) extends AnyVal {
+    def flatten: Free[F, A] = free.flatMap(identity)
+  }
 
   final case class Pure[F[_], A] private (a: A) extends Free[F, A]
-
-  final case class Impure[F[_], I, A] private (ri: F[I], arrows: Arrows[F, I, A]) extends Free[F, A]
-
-  implicit class FreeAp[F[_], A, B](val free: Free[F, A => B]) extends AnyVal {
-    def apply(fa: Free[F, A]): Free[F, B] = fa.ap(free)
+  final case class Lifted[F[_], A] private (fa: F[A]) extends Free[F, A]
+  final case class Impure[F[_], I0, A] private (
+    _fi: F[I0],
+    _arrows: Arrows[F, I0, A]
+  ) extends Free[F, A] {
+    type I = I0
+    def fi: F[I] = _fi
+    def arrows: Arrows[F, I, A] = _arrows
   }
 
   sealed abstract class Arrows[F[_], A, B] {
-    final def thenMap[C](f: B => C): Arrows[F, A, C] = thenApply(Free.point(f))
+    final def compose[C](arrows: Arrows[F, B, C]): Arrows[F, A, C] = Arrows.composed(this, arrows)
 
-    final def thenApply[C](f: Free[F, B => C]): Arrows[F, A, C] = andThen(Arrows.apply(f))
-
-    final def thenBind[C](f: B => Free[F, C]): Arrows[F, A, C] = andThen(Arrows.bind(f))
-
-    final def andThen[C](arrows: Arrows[F, B, C]): Arrows[F, A, C] = (this, arrows) match {
-      case (Arrows.Point(), _) => arrows.asInstanceOf[Arrows[F, A, C]]
-      case (_, Arrows.Point()) => this.asInstanceOf[Arrows[F, A, C]]
-      case _ => Arrows.junction(this, arrows)
-    }
-
-    final def transform[G[_]](nt: NaturalTransformation[F, G]): Arrows[G, A, B] = {
+    final def apply(a: A): Free[F, B] = {
       @tailrec
-      def loop[C](a1: Arrows[G, A, C], a2: Arrows.Sorted[F, C, B]): Arrows[G, A, B] = a2 match {
-        case Arrows.SortedArrows(arrow, a2b) =>
-          loop(a1.andThen(Arrows.transformArrow(arrow, nt)), a2b)
-        case arrow: Arrows.Arrow[F, C, B] =>
-          a1.andThen(Arrows.transformArrow(arrow, nt))
+      def loop(arrows: Arrows[F, A, B]): Free[F, B] = arrows match {
+        case single @ Arrows.Single(_, _) => single.arrow.transform(single.nt)(a)
+        case composed @ Arrows.Composed(_, _, _) =>
+          val arrows1 = composed.arrows1.transform(composed.nt)
+          val arrows2 = composed.arrows2.transform(composed.nt)
+          arrows1 match {
+            case single @ Arrows.Single(_, _) => single.arrow.transform(single.nt)(a).bind(arrows2)
+            case composed @ Arrows.Composed(_, _, _) =>
+              val arrows1a = composed.arrows1.transform(composed.nt)
+              val arrows1b = composed.arrows2.transform(composed.nt)
+              loop(arrows1a.compose(arrows1b.compose(arrows2)))
+          }
       }
 
-      loop(Arrows.point, sorted)
+      loop(this)
     }
 
-    private def sorted: Arrows.Sorted[F, A, B] = this match {
-      case Arrows.Junction(a1, a2) =>
-        @tailrec
-        def loop[C](a1: Arrows[F, A, C], a2: Arrows[F, C, B]): Arrows.Sorted[F, A, B] = a2 match {
-          case Arrows.Junction(a2a, a2b) => loop(a1.andThen(a2a), a2b)
-          case sorted: Arrows.Sorted[F, C, B] =>
-            a1 match {
-              case Arrows.Junction(a1a, a1b) =>
-                a1b match {
-                  case Arrows.Junction(a1b1, a1b2) => loop(a1a.andThen(a1b1), a1b2.andThen(a2))
-                  case Arrows.SortedArrows(a1b1, a1b2) => loop(a1a.andThen(a1b1), a1b2.andThen(a2))
-                  case arrow: Arrows.Arrow[F, _, C] => loop(a1a, Arrows.sorted(arrow, sorted))
-                  case _ => sys.error("a1b should not be other than these.")
-                }
-              case Arrows.SortedArrows(a1a, a1b) =>
-                a1b match {
-                  case Arrows.SortedArrows(a1b1, a1b2) => loop(a1a.andThen(a1b1), a1b2.andThen(a2))
-                  case arrow: Arrows.Arrow[F, _, C] => loop(a1a, Arrows.sorted(arrow, sorted))
-                }
-              case arrow: Arrows.Arrow[F, A, C] => Arrows.sorted(arrow, sorted)
-            }
-        }
-
-        loop(a1, a2)
-      case sorted @ Arrows.SortedArrows(_, _) => sorted
-      case arrow: Arrows.Arrow[F, A, B] => arrow
+    final def transform[G[_]](nt: NaturalTransformation[F, G]): Arrows[G, A, B] = this match {
+      case single @ Arrows.Single(_, _) => Arrows.Single(single.arrow, single.nt.compose(nt))
+      case composed @ Arrows.Composed(_, _, _) =>
+        Arrows.Composed(composed.arrows1, composed.arrows2, composed.nt.compose(nt))
     }
 
-    def resume(a: A): Free[F, B] = sorted match {
-      case arrow: Arrows.Arrow[F, A, B] => arrow.applyArrow(a)
-      case Arrows.SortedArrows(a1, a2) => a1.applyArrow(a).bindArrows(a2)
+    final def resume(fa: F[A])(implicit F: Applicative[F]): Either[Either[F[Free[F, B]], Free[F, B]], F[B]] = {
+      @tailrec
+      def loop[I](fi: F[I], arrows: Arrows[F, I, B]): Either[Either[F[Free[F, B]], Free[F, B]], F[B]] = arrows match {
+        case single @ Arrows.Single(_, _) =>
+          single.arrow.transform(single.nt) match {
+            case Arrows.Arrow.Map(f) => Right(F.map(f)(fi))
+            case Arrows.Arrow.Lift(f) => Right(F.ap(f)(fi))
+            case apply @ Arrows.Arrow.Apply(_, _) => Left(Right(apply.resumeApply(fi)))
+            case bind @ Arrows.Arrow.Bind(_, _) => Left(Left(F.map(bind.f.andThen(_.transform(bind.nt)))(fi)))
+          }
+        case composed @ Arrows.Composed(_, _, _) =>
+          val arrows1 = composed.arrows1.transform(composed.nt)
+          val arrows2 = composed.arrows2.transform(composed.nt)
+          arrows1 match {
+            case single @ Arrows.Single(_, _) =>
+              single.arrow.transform(single.nt) match {
+                case Arrows.Arrow.Map(f) => Left(Right(Free.lift(F.map(f)(fi)).bind(arrows2)))
+                case Arrows.Arrow.Lift(f) => Left(Right(Free.lift(F.ap(f)(fi)).bind(arrows2)))
+                case apply @ Arrows.Arrow.Apply(_, _) => Left(Right(apply.resumeApply(fi).bind(arrows2)))
+                case bind @ Arrows.Arrow.Bind(_, _) =>
+                  Left(Left(F.map(bind.f.andThen(_.transform(bind.nt).bind(arrows2)))(fi)))
+              }
+            case composed @ Arrows.Composed(_, _, _) =>
+              val arrows1a = composed.arrows1.transform(composed.nt)
+              val arrows1b = composed.arrows2.transform(composed.nt)
+              loop(fi, arrows1a.compose(arrows1b.compose(arrows2)))
+          }
+      }
+
+      loop(fa, this)
     }
 
-    def extract(fa: F[A])(implicit F: Monad[F]): F[B] = sorted match {
-      case arrow: Arrows.Arrow[F, A, B] => arrow.extractArrow(fa)
-      case Arrows.SortedArrows(a1, a2) =>
-        @tailrec
-        def loop[C, D](fc: F[C], arrow: Arrows.Arrow[F, C, D], sorted: Arrows.Sorted[F, D, B]): F[B] = sorted match {
-          case Arrows.SortedArrows(a1, a2) => loop(arrow.extractArrow(fc), a1, a2)
-          case arrow2: Arrows.Arrow[F, D, B] => arrow2.extractArrow(arrow.extractArrow(fc))
-        }
+    final def run(fa: F[A])(implicit F: Monad[F]): F[B] = {
+      def runResume(free: Free[F, B]): F[Free[F, B]] = free match {
+        case pure @ Free.Pure(_) => F.point(pure)
+        case Free.Lifted(fa) => F.map(Free.pure[F, B])(fa)
+        case impure @ Free.Impure(_, _) =>
+          impure.arrows.resume(impure.fi) match {
+            case Left(either) =>
+              either match {
+                case Left(ff) => ff
+                case Right(free) => F.point(free)
+              }
+            case Right(fb) => F.point(Free.lift(fb))
+          }
+      }
 
-        loop(fa, a1, a2)
+      def finalize(free: Free[F, B]): F[B] = free match {
+        case Free.Pure(a) => F.point(a)
+        case Free.Lifted(fa) => fa
+        case impure @ Free.Impure(_, _) => impure.fi.asInstanceOf[F[B]]
+      }
+
+      @tailrec
+      def loopF(fFree: F[Free[F, B]]): F[B] = {
+        val resumed = F.bind(runResume)(fFree)
+
+        var done = true
+        F.map[Free[F, B], Unit] {
+          case Free.Pure(_) => ()
+          case Free.Lifted(_) => ()
+          case _ => done = false
+        }(resumed)
+
+        if (done) F.bind(finalize)(resumed)
+        else loopF(resumed)
+      }
+
+      @tailrec
+      def loop[C](fa: F[C], arrows: Arrows[F, C, B]): F[B] = arrows.resume(fa) match {
+        case Left(either) =>
+          either match {
+            case Left(ff) => loopF(ff)
+            case Right(free) =>
+              free match {
+                case Free.Pure(a) => F.point(a)
+                case Free.Lifted(fa) => fa
+                case impure @ Free.Impure(_, _) => loop(impure.fi, impure.arrows)
+              }
+          }
+        case Right(fb) => fb
+      }
+
+      loop(fa, this)
     }
 
-    def extractApplicative(fa: F[A])(implicit F: Applicative[F]): Either[Free[F, B], F[B]] = sorted match {
-      case arrow: Arrows.Arrow[F, A, B] => arrow.extractArrowApplicative(fa)
-      case Arrows.SortedArrows(a1, a2) =>
-        @tailrec
-        def loop[AA, C](
-            efa: Either[Free[F, AA], F[AA]],
-            a1: Arrows.Arrow[F, AA, C],
-            a2: Arrows.Sorted[F, C, B]
-        ): Either[Free[F, B], F[B]] = efa match {
-          case Left(free) => Left(free.bindArrows(a1.andThen(a2)))
-          case Right(fa) =>
-            a2 match {
-              case a3: Arrows.Arrow[F, C, B] =>
-                a1.extractArrowApplicative(fa) match {
-                  case Left(freeC) => Left(freeC.bindArrows(a3))
-                  case Right(fc) => a3.extractArrowApplicative(fc)
-                }
-              case Arrows.SortedArrows(a21, a22) => loop(a1.extractArrowApplicative(fa), a21, a22)
-            }
-        }
+    private final def tryToFree: Option[Free[F, A => B]] = {
+      def compose[I, J, K](free: Free[F, I => J], arrow: Arrows.Arrow[F, J, K]): Option[Free[F, I => K]] =
+        arrow.tryToFree.map(free2 => free.map2(free2)(_.andThen(_)))
 
-        loop(Right(fa), a1, a2)
+      @tailrec
+      def loop[I](
+          arrows: Arrows[F, I, B],
+          acc: Option[Free[F, A => I]]
+      ): Option[Free[F, A => B]] = acc match {
+        case None => None
+        case Some(free1) =>
+          arrows match {
+            case single @ Arrows.Single(_, _) =>
+              compose(free1, single.arrow.transform(single.nt))
+            case composed @ Arrows.Composed(_, _, _) =>
+              val arrows1 = composed.arrows1.transform(composed.nt)
+              val arrows2 = composed.arrows2.transform(composed.nt)
+              arrows1 match {
+                case single @ Arrows.Single(_, _) =>
+                  loop(arrows2, compose(free1, single.arrow.transform(single.nt)))
+                case composed @ Arrows.Composed(_, _, _) =>
+                  val arrows1a = composed.arrows1.transform(composed.nt)
+                  val arrows1b = composed.arrows2.transform(composed.nt)
+                  loop(arrows1a.compose(arrows1b.compose(arrows2)), acc)
+              }
+          }
+      }
+
+      loop(this, Some(Free.pure[F, A => A](identity)))
     }
   }
 
   object Arrows {
-    def point[F[_], A]: Arrows[F, A, A] = Point()
+    def map[F[_], A, B](f: A => B): Arrows[F, A, B] = single(Arrow.map(f))
+    def apply[F[_], A, B](free: Free[F, A => B]): Arrows[F, A, B] = free match {
+      case Free.Pure(f) => single(Arrow.map(f))
+      case Free.Lifted(f) => single(Arrow.lift(f))
+      case impure @ Free.Impure(_, _) => single(Arrow.apply(impure.fi, impure.arrows))
+    }
+    def bind[F[_], A, B](f: A => Free[F, B]): Arrows[F, A, B] = single(Arrow.bind(f))
+    def lift[F[_], A, B](f: F[A => B]): Arrows[F, A, B] = single(Arrow.lift(f))
+    private def composed[F[_], A, B, C](arrows1: Arrows[F, A, B], arrows2: Arrows[F, B, C]): Arrows[F, A, C] =
+      Composed(arrows1, arrows2, NaturalTransformation.reflect)
 
-    def apply[F[_], A, B](f: Free[F, A => B]): Arrows[F, A, B] = Apply(f)
+    private def single[F[_], A, B](arrow: Arrow[F, A, B]): Arrows[F, A, B] =
+      Single(arrow, NaturalTransformation.reflect)
 
-    def bind[F[_], A, B](f: A => Free[F, B]): Arrows[F, A, B] = Bind(f, NaturalTransformation.reflect)
-
-    private def junction[F[_], A, B, C](arrows1: Arrows[F, A, B], arrows2: Arrows[F, B, C]): Arrows[F, A, C] =
-      Junction(arrows1, arrows2)
-
-    private def sorted[F[_], A, B, C](arrow: Arrow[F, A, B], sorted: Sorted[F, B, C]): Sorted[F, A, C] =
-      SortedArrows(arrow, sorted)
-
-    private def transformArrow[F[_], S[_], A, B](
-        arrow: Arrow[F, A, B],
-        nt: NaturalTransformation[F, S]
-    ): Arrow[S, A, B] = arrow match {
-      case Point() => Point().asInstanceOf[Arrows.Arrow[S, A, B]]
-      case Apply(f) => Apply(f.transform(nt))
-      case Bind(f, nt0) => Bind(f, nt0.compose(nt))
+    private implicit class Interleave[F[_], A, B, C](val arrows: Arrows[F, A, B => C]) extends AnyVal {
+      def interleave(fb: F[B])(implicit F: Functor[F]): Arrows[F, A, C] =
+        arrows.compose(Arrows.lift(F.map((b: B) => (f: B => C) => f(b))(fb)))
     }
 
-    private final case class Junction[F[_], A, B, C](
-      a1: Arrows[F, A, B],
-      a2: Arrows[F, B, C]
-    ) extends Arrows[F, A, C]
+    final case class Single[F0[_], G[_], A, B] private (
+      _arrow: Arrow[F0, A, B],
+      _nt: NaturalTransformation[F0, G]
+    ) extends Arrows[G, A, B] {
+      type F[C] = F0[C]
+      def arrow: Arrow[F, A, B] = _arrow
+      def nt: NaturalTransformation[F, G] = _nt
+    }
+    final case class Composed[F0[_], G[_], A, B0, C] private (
+      _arrows1: Arrows[F0, A, B0],
+      _arrows2: Arrows[F0, B0, C],
+      _nt: NaturalTransformation[F0, G]
+    ) extends Arrows[G, A, C] {
+      type F[D] = F0[D]
+      type B = B0
+      def arrows1: Arrows[F, A, B] = _arrows1
+      def arrows2: Arrows[F, B, C] = _arrows2
+      def nt: NaturalTransformation[F, G] = _nt
+    }
 
-    private sealed trait Sorted[F[_], A, B] extends Arrows[F, A, B]
-
-    private final case class SortedArrows[F[_], A, B, C](
-      a1: Arrow[F, A, B],
-      a2: Sorted[F, B, C]
-    ) extends Sorted[F, A, C]
-
-    private sealed trait Arrow[F[_], A, B] extends Sorted[F, A, B] {
-      final def applyArrow(a: A): Free[F, B] = this match {
-        case Point() => Free.point(a).asInstanceOf[Free[F, B]]
-        case Apply(f) =>
-          f match {
-            case Pure(f) => Free.point(f(a))
-            case Impure(ri, arrows) => impure(ri, arrows.thenMap(f => f(a)))
-          }
-        case Bind(f, nt) => f(a).transform(nt)
+    sealed abstract class Arrow[F[_], A, B] {
+      final def apply(a: A): Free[F, B] = this match {
+        case Arrow.Map(f) => Free.point(f(a))
+        case Arrow.Lift(f) => Free.lift(f).map(_(a))
+        case apply @ Arrow.Apply(_, _) => Free.lift(apply.fi).bind(apply.arrows).map(f => f(a))
+        case bind @ Arrow.Bind(_, _) => bind.f(a).transform(bind.nt)
       }
 
-      final def extractArrow(fa: F[A])(implicit F: Monad[F]): F[B] = this match {
-        case Point() => fa.asInstanceOf[F[B]]
-        case Apply(f) => F.ap(f.extract)(fa)
-        case Bind(f, nt) => F.bind((a: A) => f(a).transform(nt).extract)(fa)
+      final def transform[G[_]](nt: NaturalTransformation[F, G]): Arrow[G, A, B] = this match {
+        case Arrow.Map(f) => Arrow.map(f)
+        case Arrow.Lift(f) => Arrow.lift(nt(f))
+        case apply @ Arrow.Apply(_, _) => Arrow.Apply(nt(apply.fi), apply.arrows.transform(nt))
+        case bind @ Arrow.Bind(_, _) => Arrow.Bind(bind.f, bind.nt.compose(nt))
       }
 
-      final def extractArrowApplicative(fa: F[A])(implicit F: Applicative[F]): Either[Free[F, B], F[B]] = this match {
-        case Point() => Right(fa.asInstanceOf[F[B]])
-        case Apply(f) => eitherApplicative.ap(f.extractApplicative)(Right(fa))
-        case bind @ Bind(_, _) => Left(Free.impure(fa, bind))
+      final def tryToFree: Option[Free[F, A => B]] = this match {
+        case Arrows.Arrow.Map(f) => Some(Free.point(f))
+        case Arrows.Arrow.Lift(f) => Some(Free.lift(f))
+        case apply @ Arrows.Arrow.Apply(_, _) => Some(Free.impure(apply.fi, apply.arrows))
+        case Arrows.Arrow.Bind(_, _) => None
       }
     }
 
-    private type EA[F[_]] = { type R[A] = Either[Free[F, A], F[A]] }
+    object Arrow {
+      def map[F[_], A, B](f: A => B): Arrow[F, A, B] = Map(f)
+      def lift[F[_], A, B](f: F[A => B]): Arrow[F, A, B] = Lift(f)
+      def apply[F[_], I, A, B](fi: F[I], arrows: Arrows[F, I, A => B]): Arrow[F, A, B] = Apply(fi, arrows)
+      def bind[F[_], A, B](f: A => Free[F, B]): Arrow[F, A, B] = Bind(f, NaturalTransformation.reflect)
 
-    private def eitherApplicative[F[_]](implicit F: Applicative[F]): Applicative[EA[F]#R] = new Applicative[EA[F]#R] {
-      override def point[A](a: A): Either[Free[F, A], F[A]] = Right(F.point(a))
-
-      override def map2[A, B, C](
-          f: (A, B) => C
-      ): Either[Free[F, A], F[A]] => Either[Free[F, B], F[B]] => Either[Free[F, C], F[C]] = fa =>
-        fb =>
-          (fa, fb) match {
-            case (Left(freeA), Left(freeB)) => Left(freeA.map2(freeB)(f))
-            case (Left(freeA), Right(fb)) => Left(freeA.ap(Free.lift(F.map((b: B) => (a: A) => f(a, b))(fb))))
-            case (Right(fa), Left(freeB)) => Left(freeB.ap(Free.lift(F.map(f.curried)(fa))))
-            case (Right(fa), Right(fb)) => Right(F.map2(f)(fa)(fb))
+      final case class Map[F[_], A, B] private (f: A => B) extends Arrow[F, A, B]
+      final case class Lift[F[_], A, B] private (f: F[A => B]) extends Arrow[F, A, B]
+      final case class Apply[F[_], I0, A, B] private (
+        _fi: F[I0],
+        _arrows: Arrows[F, I0, A => B]
+      ) extends Arrow[F, A, B] {
+        type I = I0
+        def fi: F[I] = _fi
+        def arrows: Arrows[F, I, A => B] = _arrows
+        def resumeApply(fa: F[A])(implicit F: Applicative[F]): Free[F, B] = {
+          val zipped = F.map2[A, I, (A, I)]((a, i) => (a, i))(fa)(fi)
+          arrows.tryToFree match {
+            case None =>
+              val fa = F.map[(A, I), A](_._1)(zipped)
+              val fi = F.map[(A, I), I](_._2)(zipped)
+              Free.impure(fi, arrows.interleave(fa))
+            case Some(free) =>
+              Free.lift(zipped).map2(free) { case ((a, i), f) => f(i)(a) }
           }
-
-      override def ap[A, B](
-          f: Either[Free[F, A => B], F[A => B]]
-      ): Either[Free[F, A], F[A]] => Either[Free[F, B], F[B]] = fa =>
-        (fa, f) match {
-          case (Left(freeA), Left(freeF)) => Left(freeA.ap(freeF))
-          case (Left(freeA), Right(ff)) => Left(freeA.ap(Free.lift(ff)))
-          case (Right(fa), Left(freeF)) => Left(Free.lift(fa).ap(freeF))
-          case (Right(fa), Right(ff)) => Right(F.ap(ff)(fa))
         }
+      }
+      final case class Bind[F0[_], G[_], A, B] private (
+        _f: A => Free[F0, B],
+        _nt: NaturalTransformation[F0, G]
+      ) extends Arrow[G, A, B] {
+        type F[C] = F0[C]
+        def f: A => Free[F, B] = _f
+        def nt: NaturalTransformation[F, G] = _nt
+      }
     }
-
-    private final case class Point[F[_], A]() extends Arrow[F, A, A]
-
-    private final case class Apply[F[_], A, B](f: Free[F, A => B]) extends Arrow[F, A, B]
-
-    private final case class Bind[F[_], G[_], A, B](f: A => Free[F, B], nt: NaturalTransformation[F, G])
-        extends Arrow[G, A, B]
   }
 }

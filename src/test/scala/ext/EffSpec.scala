@@ -2,12 +2,12 @@ package ext
 
 import ext.Eff.{Single, Stacked}
 import org.scalatest.freespec.AnyFreeSpec
-import types.OptionMonad.monadInstance
 
 class EffSpec extends AnyFreeSpec {
   "Eff" - {
     "inject" - {
       "should compose containers" in {
+        import types.Option.monad
         type R[A] = Stack.of2[Int => *, Option]#R[A]
 
         val eff1: Eff[R, Int] = Eff.inject(Option(21))
