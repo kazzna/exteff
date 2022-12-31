@@ -22,48 +22,30 @@ object NaturalTransformation {
     override def apply[A](fa: F[A]): F[A] = fa
   }
 
-  private final case class Composed[F[_], G[_], H[_]](
-    left: NaturalTransformation[F, G],
-    right: NaturalTransformation[G, H]
+  private final case class Composed[F[_], G0[_], H[_]](
+    _nt1: NaturalTransformation[F, G0],
+    _nt2: NaturalTransformation[G0, H]
   ) extends NaturalTransformation[F, H] {
-    override def apply[A](fa: F[A]): H[A] = sorted.apply(fa)
-
-    private def sorted: NaturalTransformation[F, H] = {
+    private type G[A] = G0[A]
+    private def nt1: NaturalTransformation[F, G] = _nt1
+    private def nt2: NaturalTransformation[G, H] = _nt2
+    override def apply[A](fa: F[A]): H[A] = {
       @tailrec
-      def loop[I[_]](
-          a: NaturalTransformation[F, I],
-          b: NaturalTransformation[I, H]
-      ): NaturalTransformation[F, H] = b match {
-        case Composed(ba, bb) => loop(a.compose(ba), bb)
-        case b =>
-          a match {
-            case Composed(aa, ab) =>
-              ab match {
-                case Composed(aba, abb) => loop(aa.compose(aba).compose(abb), b)
-                case Sorted(aba, abb) => loop(aa.compose(aba).compose(abb), b)
-                case ab => loop(aa, Sorted(ab, b))
-              }
-            case Sorted(aa, ab) => loop(aa.compose(ab), b)
-            case a => Sorted(a, b)
+      def loop[M[_], N[_]](
+          ma: M[A],
+          nt1: NaturalTransformation[M, N],
+          nt2: NaturalTransformation[N, H]
+      ): H[A] = nt1 match {
+        case composed @ Composed(_, _) => loop(ma, composed.nt1, composed.nt2.compose(nt2))
+        case nt1 =>
+          val na = nt1(ma)
+          nt2 match {
+            case composed @ Composed(_, _) => loop(na, composed.nt1, composed.nt2)
+            case nt2 => nt2(na)
           }
       }
 
-      loop(left, right)
-    }
-  }
-
-  private final case class Sorted[F[_], G[_], H[_]](
-    first: NaturalTransformation[F, G],
-    next: NaturalTransformation[G, H]
-  ) extends NaturalTransformation[F, H] {
-    override def apply[A](fa: F[A]): H[A] = {
-      @tailrec
-      def loop[I[_], J[_]](nt1: I ~> J, nt2: J ~> H, acc: I[A]): H[A] = nt2 match {
-        case Sorted(first, next) => loop(first, next, nt1(acc))
-        case nt2 => nt2(nt1(acc))
-      }
-
-      loop(first, next, fa)
+      loop(fa, nt1, nt2)
     }
   }
 }
