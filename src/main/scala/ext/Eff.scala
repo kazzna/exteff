@@ -11,7 +11,7 @@ object Eff {
   }
 
   implicit class Stacked[F[_], R[_], A](val eff: Eff[Stack.of[F, R]#R, A]) extends AnyVal {
-    def restruct[G[_]](nt: NaturalTransformation[F, G])(implicit G: G In R): Eff[R, A] =
-      eff.transform(Stack.restruct(nt))
+    def restructure[G[_]](nt: NaturalTransformation[F, G])(implicit G: G In R): Eff[R, A] =
+      eff.transform(Stack.restructure(nt))
   }
 }

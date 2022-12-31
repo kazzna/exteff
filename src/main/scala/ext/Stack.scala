@@ -34,7 +34,7 @@ object Stack {
     }
   }
 
-  def restruct[F[_], G[_], R[_]](
+  def restructure[F[_], G[_], R[_]](
       nt: NaturalTransformation[F, G]
   )(implicit G: G In R): NaturalTransformation[Stack.of[F, R]#R, R] =
     new NaturalTransformation[Stack.of[F, R]#R, R] {
@@ -44,7 +44,7 @@ object Stack {
       }
     }
 
-  implicit class Restruct[F[_], R[_], A](val stack: Stack.of[F, R]#R[A]) extends AnyVal {
-    def restruct[G[_]](nt: F ~> G)(implicit G: G In R): R[A] = Stack.restruct(nt).apply(stack)
+  implicit class Restructure[F[_], R[_], A](val stack: Stack.of[F, R]#R[A]) extends AnyVal {
+    def restructure[G[_]](nt: F ~> G)(implicit G: G In R): R[A] = Stack.restructure(nt).apply(stack)
   }
 }
