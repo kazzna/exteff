@@ -22,7 +22,7 @@ class EffSpec extends AnyFreeSpec {
           override def apply[B](fa: Int => B): Option[B] = Option(fa(21))
         }
 
-        val eff4 = eff3.restruct(func1ToOption)
+        val eff4 = eff3.restructure(func1ToOption)
         assert(eff4.extractEff === Option(42))
       }
     }
