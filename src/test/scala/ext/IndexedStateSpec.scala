@@ -4,18 +4,32 @@ import org.scalatest.freespec.AnyFreeSpec
 
 class IndexedStateSpec extends AnyFreeSpec {
   type Stack[A] = List[A]
-  type NonEmptyStack[A] = List[A]
-  type SwappableStack[A] = List[A]
 
   def empty[A]: Stack[A] = List.empty
-
-  def pushStack[A](a: A): IndexedState[Stack[A], NonEmptyStack[A], Unit] = ???
-  def pushNonEmpty[A](a: A): IndexedState[Stack[A], NonEmptyStack[A], Unit] = ???
-
-  def popSwappable[A]: IndexedState[SwappableStack[A], NonEmptyStack[A], A] = ???
-  def popNonEmpty[A]: IndexedState[NonEmptyStack[A], Stack[A], A] = ???
-
-  def swap[A]: IndexedState[SwappableStack[A], SwappableStack[A], Unit] = ???
+  def push[A](a: A): IndexedState[Stack[A], Stack[A], Unit] = for {
+    stack <- IndexedState.get[Stack[A]]
+    _ <- IndexedState.put(a +: stack)
+  } yield ()
+  def pop[A]: IndexedState[Stack[A], Stack[A], A] = for {
+    stack <- IndexedState.get[Stack[A]]
+    a = stack.head
+    stack2 = stack.tail
+    _ <- IndexedState.put(stack2)
+  } yield a
+  def swap[A]: IndexedState[Stack[A], Stack[A], Unit] = for {
+    a1 <- pop[A]
+    a2 <- pop
+    _ <- push(a2)
+    _ <- push(a1)
+  } yield ()
+  def sumTop2[A: Numeric]: IndexedState[Stack[A], Stack[A], A] = for {
+    a1 <- pop[A]
+    a2 <- pop
+  } yield a1 // + a2
+  def mapStack[A, B](f: A => B): IndexedState[Stack[A], Stack[B], Unit] = for {
+    s <- IndexedState.get[Stack[A]]
+    _ <- IndexedState.put(s.map(f))
+  } yield ()
 
   "IndexedState object" - {
     "pure" - {
@@ -79,6 +93,15 @@ class IndexedStateSpec extends AnyFreeSpec {
         }
 
         assert(flatMap.run("abc") === ((), List("abc", "bc", "c", "")))
+      }
+
+      "returns new State" in {
+        val state = for {
+          _ <- push(42)
+          _ <- mapStack[Int, Double](_.toDouble)
+        } yield ()
+
+        assert(state.exec(empty) === List(42d))
       }
     }
   }
