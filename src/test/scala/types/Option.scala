@@ -2,7 +2,7 @@ package types
 
 object Option {
   implicit val monad: Monad[Option] = new Monad[Option] {
-    override def point[A](a: A): Option[A] = Some(a)
-    override def bind[A, B](f: A => Option[B]): Option[A] => Option[B] = _.flatMap(f)
+    override def point[A]: A => Option[A] = Some.apply
+    override def bind[A, B]: (A => Option[B]) => Option[A] => Option[B] = f => _.flatMap(f)
   }
 }
