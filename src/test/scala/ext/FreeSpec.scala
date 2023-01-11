@@ -302,6 +302,52 @@ class FreeSpec extends AnyFreeSpec {
           }
         }
       }
+
+      "apply" - {
+        "Free.Pure" - {
+          "returns Free.Pure" in {
+            val pure1 = Free.pure[Box, Int => Double](_.toDouble)
+            val pure2 = Free.pure[Box, Int](42)
+            assert(pure1(pure2) === Free.pure[Box, Double](42d))
+          }
+        }
+
+        "Free.Lifted" - {
+          "returns Free.Impure" in {
+            val f = (_: Int).toDouble
+            val pure = Free.pure[Box, Int => Double](f)
+            val lifted = Free.lift(Box(42))
+            val expected = lifted.map(f)
+            assert(pure(lifted) === expected)
+          }
+
+          "returns error in Free.Impure" in {
+            val f = (_: Int).toDouble
+            val pure = Free.pure[Either[String, *], Int => Double](f)
+            val lifted = Free.lift[Either[String, *], Int](Left("Error occurred."))
+            val expected = lifted.map(f)
+            assert(pure(lifted) === expected)
+          }
+        }
+
+        "Free.Impure" - {
+          "returns Free.Impure" in {
+            val f = (_: Int).toDouble
+            val pure = Free.pure[Box, Int => Double](f)
+            val impure = Free.lift(Box("abc")).map(_.length)
+            val expected = impure.map(f)
+            assert(pure(impure) === expected)
+          }
+
+          "returns error in Free.Impure" in {
+            val f = (_: Int).toDouble
+            val pure = Free.pure[Either[String, *], Int => Double](f)
+            val impure = Free.lift[Either[String, *], String](Left("Error occurred.")).map(_.length)
+            val expected = impure.map(f)
+            assert(pure(impure) === expected)
+          }
+        }
+      }
     }
 
     "Lifted" - {
@@ -725,6 +771,89 @@ class FreeSpec extends AnyFreeSpec {
               assert(fi === box)
               import types.Box.monad
               assert(arrows.run(fi) === Box(42))
+            }
+          }
+        }
+      }
+
+      "apply" - {
+        "Free.Pure" - {
+          "returns Free.Impure" in {
+            val f = (_: Int).toDouble
+            val lifted = Free.lift(Box(f))
+            val pure = Free.pure[Box, Int](42)
+            assertImpure[Box, Int => Double, Double](lifted(pure)) { (fi, arrows) =>
+              assert(fi === Box(f))
+              import types.Box.monad
+              assert(arrows.run(fi) === Box(42d))
+            }
+          }
+
+          "keeps error on Free.Lifted" in {
+            val error: Either[List[String], Int => Double] = Left(List("Error occurred."))
+            val lifted = Free.lift(error)
+            val pure = Free.pure[Either[List[String], *], Int](42)
+            assertImpure[Either[List[String], *], Int => Double, Double](lifted(pure)) { (fi, arrows) =>
+              assert(fi === error)
+              import types.Either.monadWithLeftSemigroup
+              import types.List.semigroup
+              assert(arrows.run(fi) === error)
+            }
+          }
+        }
+
+        "Free.Lifted" - {
+          "returns Free.Impure" in {
+            val f = (_: Int).toDouble
+            val lifted1 = Free.lift(Box(f))
+            val lifted2 = Free.lift(Box(42))
+            assertImpure[Box, Int => Double, Double](lifted1(lifted2)) { (fi, arrows) =>
+              assert(fi === Box(f))
+              import types.Box.monad
+              assert(arrows.run(fi) === Box(42d))
+            }
+          }
+
+          "merges errors in Free" in {
+            val error1 = List("First error occurred.")
+            val error2 = List("Another error occurred.")
+            val either1: Either[List[String], Int => Double] = Left(error1)
+            val either2: Either[List[String], Int] = Left(error2)
+            val lifted1 = Free.lift(either1)
+            val lifted2 = Free.lift(either2)
+            assertImpure[Either[List[String], *], Int => Double, Double](lifted1(lifted2)) { (fi, arrows) =>
+              assert(fi === either1)
+              import types.Either.monadWithLeftSemigroup
+              import types.List.semigroup
+              assert(arrows.run(fi) === Left(error1 ++ error2))
+            }
+          }
+        }
+
+        "Free.Impure" - {
+          "returns Free.Impure" in {
+            val f = (_: Int).toDouble
+            val lifted = Free.lift(Box(f))
+            val impure = Free.lift(Box("abc")).map(_.length)
+            assertImpure[Box, Int => Double, Double](lifted(impure)) { (fi, arrows) =>
+              assert(fi === Box(f))
+              import types.Box.monad
+              assert(arrows.run(fi) === Box(3d))
+            }
+          }
+
+          "merges errors in Free" in {
+            val error1 = List("First error occurred.")
+            val error2 = List("Another error occurred.")
+            val either1: Either[List[String], Int => Double] = Left(error1)
+            val either2: Either[List[String], String] = Left(error2)
+            val lifted1 = Free.lift(either1)
+            val lifted2 = Free.lift(either2).map(_.length)
+            assertImpure[Either[List[String], *], Int => Double, Double](lifted1(lifted2)) { (fi, arrows) =>
+              assert(fi === either1)
+              import types.Either.monadWithLeftSemigroup
+              import types.List.semigroup
+              assert(arrows.run(fi) === Left(error1 ++ error2))
             }
           }
         }
@@ -1293,6 +1422,94 @@ class FreeSpec extends AnyFreeSpec {
               import types.Box.monad
               assert(arrows.run(fi) === Box(42))
             }
+          }
+        }
+      }
+    }
+
+    "apply" - {
+      "Free.Pure" - {
+        "returns Free.Impure" in {
+          val impure = Free.lift(Box("abc")).map(s => (i: Int) => (s.length + i).toDouble)
+          val pure = Free.pure[Box, Int](39)
+          assertImpure[Box, String, Double](impure(pure)) { (fi, arrows) =>
+            assert(fi === Box("abc"))
+            import types.Box.monad
+            assert(arrows.run(fi) === Box(42d))
+          }
+        }
+
+        "keeps error on Free.Lifted" in {
+          val error: Either[List[String], String] = Left(List("Error occurred."))
+          val lifted = Free.lift(error).map(s => (i: Int) => (s.length + i).toDouble)
+          val pure = Free.pure[Either[List[String], *], Int](42)
+          assertImpure[Either[List[String], *], String, Double](lifted(pure)) { (fi, arrows) =>
+            assert(fi === error)
+            import types.Either.monadWithLeftSemigroup
+            import types.List.semigroup
+            assert(arrows.run(fi) === error)
+          }
+        }
+      }
+
+      "Free.Lifted" - {
+        "returns Free.Impure" in {
+          val box = Box("abc")
+          val lifted1 = Free.lift(box).map(s => (i: Int) => (s.length + i).toDouble)
+          val lifted2 = Free.lift(Box(39))
+          assertImpure[Box, String, Double](lifted1(lifted2)) { (fi, arrows) =>
+            assert(fi === box)
+            import types.Box.monad
+            assert(arrows.run(fi) === Box(42d))
+          }
+        }
+
+        "merges errors in Free" in {
+          val error1 = List("First error occurred.")
+          val error2 = List("Another error occurred.")
+          val error3 = List("Even other error occurred.")
+          val either1: Either[List[String], String] = Left(error1)
+          val either2: Either[List[String], String => Int => Double] = Left(error2)
+          val either3: Either[List[String], Int] = Left(error3)
+          val impure = Free.lift(either1).ap(Free.lift(either2))
+          val lifted = Free.lift(either3)
+          assertImpure[Either[List[String], *], String, Double](impure(lifted)) { (fi, arrows) =>
+            assert(fi === either1)
+            import types.Either.monadWithLeftSemigroup
+            import types.List.semigroup
+            assert(arrows.run(fi) === Left(error1 ++ error2 ++ error3))
+          }
+        }
+      }
+
+      "Free.Impure" - {
+        "returns Free.Impure" in {
+          val box = Box("abc")
+          val impure1 = Free.lift(box).map(s => (i: Int) => (s.length + i).toDouble)
+          val impure2 = Free.lift(Box("xyz")).map(_.length)
+          assertImpure[Box, String, Double](impure1(impure2)) { (fi, arrows) =>
+            assert(fi === box)
+            import types.Box.monad
+            assert(arrows.run(fi) === Box(6d))
+          }
+        }
+
+        "merges errors in Free" in {
+          val error1 = List("1st error occurred.")
+          val error2 = List("2nd error occurred.")
+          val error3 = List("3rd error occurred.")
+          val error4 = List("4th error occurred.")
+          val either1: Either[List[String], String] = Left(error1)
+          val either2: Either[List[String], String => Int => Double] = Left(error2)
+          val either3: Either[List[String], Double] = Left(error3)
+          val either4: Either[List[String], Double => Int] = Left(error4)
+          val impure = Free.lift(either1).ap(Free.lift(either2))
+          val lifted = Free.lift(either3).ap(Free.lift(either4))
+          assertImpure[Either[List[String], *], String, Double](impure(lifted)) { (fi, arrows) =>
+            assert(fi === either1)
+            import types.Either.monadWithLeftSemigroup
+            import types.List.semigroup
+            assert(arrows.run(fi) === Left(error1 ++ error2 ++ error3 ++ error4))
           }
         }
       }
