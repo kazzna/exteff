@@ -86,10 +86,10 @@ object Free {
       def loop[I](fi: F[I], arrows: Arrows[F, I, B]): Either[Either[F[Free[F, B]], Free[F, B]], F[B]] = arrows match {
         case single @ Arrows.Single(_, _) =>
           single.arrow.transform(single.nt) match {
-            case Arrows.Arrow.Map(f) => Right(F.map(f)(fi))
-            case Arrows.Arrow.Lift(f) => Right(F.ap(f)(fi))
+            case Arrows.Arrow.Map(f) => Right(F.map(fi)(f))
+            case Arrows.Arrow.Lift(f) => Right(F.ap(fi)(f))
             case apply @ Arrows.Arrow.Apply(_, _) => Left(Right(apply.resumeApply(fi)))
-            case bind @ Arrows.Arrow.Bind(_, _) => Left(Left(F.map(bind.f.andThen(_.transform(bind.nt)))(fi)))
+            case bind @ Arrows.Arrow.Bind(_, _) => Left(Left(F.map(fi)(bind.f.andThen(_.transform(bind.nt)))))
           }
         case composed @ Arrows.Composed(_, _, _) =>
           val arrows1 = composed.arrows1.transform(composed.nt)
@@ -97,11 +97,11 @@ object Free {
           arrows1 match {
             case single @ Arrows.Single(_, _) =>
               single.arrow.transform(single.nt) match {
-                case Arrows.Arrow.Map(f) => Left(Right(Free.lift(F.map(f)(fi)).bind(arrows2)))
-                case Arrows.Arrow.Lift(f) => Left(Right(Free.lift(F.ap(f)(fi)).bind(arrows2)))
+                case Arrows.Arrow.Map(f) => Left(Right(Free.lift(F.map(fi)(f)).bind(arrows2)))
+                case Arrows.Arrow.Lift(f) => Left(Right(Free.lift(F.ap(fi)(f)).bind(arrows2)))
                 case apply @ Arrows.Arrow.Apply(_, _) => Left(Right(apply.resumeApply(fi).bind(arrows2)))
                 case bind @ Arrows.Arrow.Bind(_, _) =>
-                  Left(Left(F.map(bind.f.andThen(_.transform(bind.nt).bind(arrows2)))(fi)))
+                  Left(Left(F.map(fi)(bind.f.andThen(_.transform(bind.nt).bind(arrows2)))))
               }
             case composed @ Arrows.Composed(_, _, _) =>
               val arrows1a = composed.arrows1.transform(composed.nt)
@@ -115,8 +115,8 @@ object Free {
 
     final def run(fa: F[A])(implicit F: Monad[F]): F[B] = {
       def runResume(free: Free[F, B]): F[Free[F, B]] = free match {
-        case pure @ Free.Pure(_) => F.point(pure)
-        case Free.Lifted(fa) => F.map(Free.pure[F, B])(fa)
+        case pure @ Free.Pure(_) => F.point[Free[F, B]](pure)
+        case Free.Lifted(fa) => F.map(fa)(Free.pure[F, B])
         case impure @ Free.Impure(_, _) =>
           impure.arrows.resume(impure.fi) match {
             case Left(either) =>
@@ -136,16 +136,16 @@ object Free {
 
       @tailrec
       def loopF(fFree: F[Free[F, B]]): F[B] = {
-        val resumed = F.bind(runResume)(fFree)
+        val resumed = F.bind(fFree)(runResume)
 
         var done = true
-        F.map[Free[F, B], Unit] {
+        F.map(resumed) {
           case Free.Pure(_) => ()
           case Free.Lifted(_) => ()
           case _ => done = false
-        }(resumed)
+        }
 
-        if (done) F.bind(finalize)(resumed)
+        if (done) F.bind(resumed)(finalize)
         else loopF(resumed)
       }
 
@@ -216,7 +216,7 @@ object Free {
 
     private implicit class Interleave[F[_], A, B, C](val arrows: Arrows[F, A, B => C]) extends AnyVal {
       def interleave(fb: F[B])(implicit F: Functor[F]): Arrows[F, A, C] =
-        arrows.compose(Arrows.lift(F.map((b: B) => (f: B => C) => f(b))(fb)))
+        arrows.compose(Arrows.lift(F.map(fb)(b => (f: B => C) => f(b))))
     }
 
     final case class Single[F0[_], G[_], A, B] private (
@@ -278,11 +278,11 @@ object Free {
         def fi: F[I] = _fi
         def arrows: Arrows[F, I, A => B] = _arrows
         def resumeApply(fa: F[A])(implicit F: Applicative[F]): Free[F, B] = {
-          val zipped = F.map2[A, I, (A, I)]((a, i) => (a, i))(fa)(fi)
+          val zipped = F.map2(fa)(fi)((a, i) => (a, i))
           arrows.tryToFree match {
             case None =>
-              val fa = F.map[(A, I), A](_._1)(zipped)
-              val fi = F.map[(A, I), I](_._2)(zipped)
+              val fa = F.map(zipped)(_._1)
+              val fi = F.map(zipped)(_._2)
               Free.impure(fi, arrows.interleave(fa))
             case Some(free) =>
               Free.lift(zipped).map2(free) { case ((a, i), f) => f(i)(a) }

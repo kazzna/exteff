@@ -10,22 +10,11 @@ lazy val root = (project in file("."))
       "--feature"
     ),
     libraryDependencies ++= Seq(
+      "com.github.kazzna" % "types" % "0.1.0",
       "org.scalatest" %% "scalatest" % "3.2.13" % "test"
     ),
     Test / testOptions += Tests.Argument("-l", "org.scalatest.tags.Slow")
   )
-  .dependsOn(
-    types
-  )
 
-lazy val types = (project in file("types"))
-  .settings(
-    name := "types",
-    version := "0.1.0",
-    scalacOptions ++= Seq(
-      "--deprecation",
-      "--feature"
-    )
-  )
-
+resolvers += "jitpack" at "https://jitpack.io"
 addCompilerPlugin("org.typelevel" % "kind-projector" % "0.13.2" cross CrossVersion.full)
