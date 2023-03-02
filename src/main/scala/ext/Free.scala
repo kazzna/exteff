@@ -299,4 +299,11 @@ object Free {
       }
     }
   }
+
+  implicit def monad[F[_]]: Monad[Free[F, *]] = new Monad[Eff[F, *]] {
+    override def point[A]: (=> A) => Eff[F, A] = a => Free.point(a)
+    override def ap[A, B]: Eff[F, A] => Eff[F, A => B] => Eff[F, B] = _.ap
+    override def map2[A, B, C]: Eff[F, A] => Eff[F, B] => ((A, B) => C) => Eff[F, C] = fa => fb => fa.map2(fb)
+    override def bind[A, B]: Eff[F, A] => (A => Eff[F, B]) => Eff[F, B] = fa => fa.flatMap
+  }
 }
