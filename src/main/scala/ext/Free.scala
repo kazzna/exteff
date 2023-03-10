@@ -42,6 +42,14 @@ object Free {
     def flatten: Free[F, A] = free.flatMap(identity)
   }
 
+  implicit final class Apply[F[_], A, B](val ff: Free[F, A => B]) extends AnyVal {
+    def apply(free: Free[F, A]): Free[F, B] = ff match {
+      case Free.Pure(f) => free.map(f)
+      case lifted @ Free.Lifted(_) => lifted.map2(free)(_(_))
+      case impure @ Free.Impure(_, _) => impure.map2(free)(_(_))
+    }
+  }
+
   final case class Pure[F[_], A] private (a: A) extends Free[F, A]
   final case class Lifted[F[_], A] private (fa: F[A]) extends Free[F, A]
   final case class Impure[F[_], I0, A] private (
