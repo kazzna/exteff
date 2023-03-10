@@ -432,11 +432,11 @@ class FreeArrowsSpec extends AnyFreeSpec {
 
             import types.Option.monad
             val actual = bind.resume(Option("abc"))
-            implicitly[types.Functor[Option]].map[Free[Option, Double], Unit] { free =>
+            implicitly[types.Functor[Option]].map(actual.left.value.left.value) { free =>
               assertLifted[Option, Double](free) { fi =>
                 assert(fi === Option(42d))
               }
-            }(actual.left.value.left.value)
+            }
           }
         }
       }
