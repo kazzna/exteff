@@ -11,7 +11,7 @@ lazy val root = (project in file("."))
     ),
     libraryDependencies ++= Seq(
       "com.github.kazzna" % "types" % "0.1.0",
-      "org.scalatest" %% "scalatest" % "3.2.13" % "test"
+      "org.scalatest" %% "scalatest" % "3.2.15" % "test"
     ),
     Test / testOptions += Tests.Argument("-l", "org.scalatest.tags.Slow")
   )
